@@ -1,0 +1,45 @@
+`timescale 1ns / 1ps
+
+module uart_tx (
+    input wire clk,
+    input wire start,      
+    input wire [7:0] data,  
+    output reg tx,          
+    output reg busy         
+);
+
+parameter CLK_FREQ = 100_000_000; 
+parameter BAUD = 115200;          
+parameter CLKS_PER_BIT = CLK_FREQ / BAUD; 
+reg [3:0] bit_idx;    
+reg [13:0] clk_count;  
+reg [9:0] tx_shift;    
+
+always @(posedge clk) begin
+    if (start & !busy) begin 
+        tx_shift <= {1'b1, data, 1'b0}; 
+        busy <= 1;         
+        bit_idx <= 0;      
+        clk_count <= 0;     
+        tx <= 1'b0;        
+    end else if (busy) begin 
+        if (clk_count == CLKS_PER_BIT - 1) begin 
+            clk_count <= 0; 
+            bit_idx <= bit_idx + 1; 
+            if (bit_idx == 9) begin 
+                busy <= 0;  
+                tx <= 1'b1; 
+            end else begin
+                
+                tx <= tx_shift[1];
+                tx_shift <= {1'b1, tx_shift[9:1]}; 
+            end
+        end else begin
+            clk_count <= clk_count + 1; 
+        end
+    end else begin
+        tx <= 1'b1; 
+    end
+end
+
+endmodule
