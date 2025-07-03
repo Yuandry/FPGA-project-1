@@ -1,0 +1,212 @@
+timescale 1ns / 1ps
+
+module uart_mandelbrot_top (
+    input wire clk,           
+    input wire rst,           
+    input wire start_btn,    
+    output wire tx          
+);
+
+wire [7:0] iterations;
+wire calc_done;
+
+reg start_calc_reg; 
+
+
+reg signed [31:0] c_real; 
+reg signed [31:0] c_imag; 
+
+reg [19:0] debounce_counter_rst;
+reg [19:0] debounce_counter_start;
+reg rst_debounced;
+reg start_btn_debounced;
+
+localparam DEBOUNCE_TIME_CYCLES = 20'd1_000_000; 
+
+
+always @(posedge clk or negedge rst) begin 
+    if (rst == 1'b0) begin 
+        rst_debounced <= 1'b0;
+        debounce_counter_rst <= 20'd0;
+    end else begin
+        if (rst != rst_debounced) begin 
+            debounce_counter_rst <= debounce_counter_rst + 1;
+            if (debounce_counter_rst == DEBOUNCE_TIME_CYCLES) begin
+                rst_debounced <= rst; 
+                debounce_counter_rst <= 20'd0;
+            end
+        end else begin
+            debounce_counter_rst <= 20'd0; 
+        end
+    end
+end
+
+
+always @(posedge clk or negedge rst) begin 
+    if (rst == 1'b0) begin 
+        start_btn_debounced <= 1'b0;
+        debounce_counter_start <= 20'd0;
+    end else begin
+        if (start_btn != start_btn_debounced) begin 
+            debounce_counter_start <= debounce_counter_start + 1;
+            if (debounce_counter_start == DEBOUNCE_TIME_CYCLES) begin
+                start_btn_debounced <= start_btn; 
+                debounce_counter_start <= 20'd0;
+            end
+        end else begin
+            debounce_counter_start <= 20'd0; 
+        end
+    end
+end
+
+
+mandelbrot_iter_engine core (
+    .clk(clk),
+    .reset(~rst_debounced), 
+    .start_calc(start_calc_reg),
+    .c_real_in(c_real), 
+    .c_imag_in(c_imag), 
+    .calc_done(calc_done),
+    .iterations(iterations)
+);
+
+
+reg send_start;
+reg [7:0] send_data;
+wire uart_busy;
+
+uart_tx uart_tx_inst (
+    .clk(clk),
+    .start(send_start),
+    .data(send_data),
+    .tx(tx),
+    .busy(uart_busy)
+);
+
+
+reg [33:0] current_iter_val; 
+reg [3:0] send_state;       
+localparam SEND_IDLE       = 4'd0,
+           WAIT_CALC_DONE  = 4'd1,
+           SEND_I_CHAR     = 4'd2,
+           SEND_EQUAL_CHAR = 4'd3,
+           SEND_DIGIT_H    = 4'd4,
+           SEND_DIGIT_T    = 4'd5,
+           SEND_DIGIT_U    = 4'd6,
+           SEND_CR         = 4'd7,
+           SEND_LF         = 4'd8;
+
+
+reg prev_start_btn_debounced;
+reg button_pressed_pulse; 
+
+
+always @(posedge clk or negedge rst_debounced) begin
+   
+    if (rst_debounced == 1'b0) begin
+       
+        send_start <= 1'b0;
+        send_data <= 8'd0;
+        current_iter_val <= 32'd0;
+        send_state <= SEND_IDLE;
+        start_calc_reg <= 1'b0;
+        c_real <= 32'sd0;
+        c_imag <= 32'sd0;
+        prev_start_btn_debounced <= 1'b1;
+        button_pressed_pulse <= 1'b0;     
+    end
+    
+    else begin
+        
+        button_pressed_pulse <= prev_start_btn_debounced && (start_btn_debounced == 1'b0); 
+        prev_start_btn_debounced <= start_btn_debounced;
+
+    
+        case (send_state)
+            SEND_IDLE: begin
+                
+                if (button_pressed_pulse && !start_calc_reg && !uart_busy) begin
+
+                    c_real <= -134217728; 
+                    c_imag <= 0;      
+                        
+                    //c_real <= -26843546; 
+                    //c_imag <= 32'sd161061274; 
+
+                    //c_real <= 32'd201326592; 
+                    //c_imag <= 32'd0;         
+
+                    start_calc_reg <= 1'b1; 
+                    send_state <= WAIT_CALC_DONE; 
+                end
+            end
+            WAIT_CALC_DONE: begin
+                if (calc_done) begin
+                    start_calc_reg <= 1'b0; 
+                    current_iter_val <= iterations; 
+                    send_state <= SEND_I_CHAR; 
+                end
+            end
+            SEND_I_CHAR: begin
+                if (!uart_busy) begin
+                    send_data <= "i";
+                    send_start <= 1'b1;
+                    send_state <= SEND_EQUAL_CHAR;
+                end
+            end
+            SEND_EQUAL_CHAR: begin
+                if (!uart_busy) begin
+                    send_data <= "=";
+                    send_start <= 1'b1;
+                    if (current_iter_val >= 100) begin
+                        send_state <= SEND_DIGIT_H;
+                    end else if (current_iter_val >= 10) begin
+                        send_state <= SEND_DIGIT_T;
+                    end else begin
+                        send_state <= SEND_DIGIT_U;
+                    end
+                end
+            end
+            SEND_DIGIT_H: begin
+                if (!uart_busy) begin
+                    send_data <= (current_iter_val / 100) + "0";
+                    send_start <= 1'b1;
+                    current_iter_val <= current_iter_val % 100;
+                    send_state <= SEND_DIGIT_T;
+                end
+            end
+            SEND_DIGIT_T: begin
+                if (!uart_busy) begin
+                    send_data <= (current_iter_val / 10) + "0";
+                    send_start <= 1'b1;
+                    current_iter_val <= current_iter_val % 10;
+                    send_state <= SEND_DIGIT_U;
+                end
+            end
+            SEND_DIGIT_U: begin
+                if (!uart_busy) begin
+                    send_data <= current_iter_val + "0";
+                    send_start <= 1'b1;
+                    send_state <= SEND_CR;
+                end
+            end
+            SEND_CR: begin
+                if (!uart_busy) begin
+                    send_data <= 8'd13; 
+                    send_start <= 1'b1;
+                    send_state <= SEND_LF;
+                end
+            end
+            SEND_LF: begin
+                if (!uart_busy) begin
+                    send_data <= 8'd10; 
+                    send_start <= 1'b1;
+                    send_state <= SEND_IDLE; 
+                end
+            end
+            default: send_state <= SEND_IDLE; 
+        endcase
+    end
+end
+
+endmodule
