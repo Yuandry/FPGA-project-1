@@ -1,0 +1,142 @@
+`timescale 1ns / 1ps
+
+module mandelbrot_iter_engine (
+    input wire clk,
+    input wire reset,
+    input wire start_calc,
+    input wire signed [31:0] c_real_in,
+    input wire signed [31:0] c_imag_in,
+    output wire calc_done,
+    output wire [7:0] iterations
+);
+
+localparam Q_BITS = 28; 
+localparam signed [31:0] TWO_POINT_ZERO_FIXED = 2 << Q_BITS;
+
+reg signed [31:0] z_real, z_imag;
+reg signed [31:0] c_real_internal, c_imag_internal;
+reg [7:0] iter_count;
+reg calc_done_reg;
+
+reg [1:0] state;
+localparam IDLE = 2'b00, CALC = 2'b01, DONE = 2'b10;
+
+
+reg [63:0] zr_sq; 
+reg [63:0] zi_sq; 
+
+
+reg [63:0] two_abs_zr_abs_zi_temp; 
+
+
+reg signed [63:0] zr_sq_scaled; 
+reg signed [63:0] zi_sq_scaled; 
+reg signed [63:0] two_zr_zi_scaled; 
+
+reg is_z_real_neg_q; 
+reg is_z_imag_neg_q; 
+
+
+(* mark_debug = "true" *) wire signed [31:0] debug_core_c_real_in;
+(* mark_debug = "true" *) wire signed [31:0] debug_core_c_imag_in;
+(* mark_debug = "true" *) wire signed [31:0] debug_core_z_real;
+(* mark_debug = "true" *) wire signed [31:0] debug_core_z_imag;
+(* mark_debug = "true" *) wire [7:0] debug_core_iter_count;
+(* mark_debug = "true" *) wire debug_core_diverge_cond_real_pos;
+(* mark_debug = "true" *) wire debug_core_diverge_cond_real_neg;
+(* mark_debug = "true" *) wire debug_core_diverge_cond_imag_pos;
+(* mark_debug = "true" *) wire debug_core_diverge_cond_imag_neg;
+(* mark_debug = "true" *) wire debug_core_max_iter_reached;
+(* mark_debug = "true" *) wire debug_core_overall_diverge_or_max;
+
+
+assign debug_core_c_real_in = c_real_in;
+assign debug_core_c_imag_in = c_imag_in;
+assign debug_core_z_real = z_real;
+assign debug_core_z_imag = z_imag;
+assign debug_core_iter_count = iter_count;
+
+assign debug_core_diverge_cond_real_pos = ($signed(z_real) > TWO_POINT_ZERO_FIXED);
+assign debug_core_diverge_cond_real_neg = ($signed(z_real) < -$signed(TWO_POINT_ZERO_FIXED));
+assign debug_core_diverge_cond_imag_pos = ($signed(z_imag) > TWO_POINT_ZERO_FIXED);
+assign debug_core_diverge_cond_imag_neg = ($signed(z_imag) < -$signed(TWO_POINT_ZERO_FIXED));
+assign debug_core_max_iter_reached = (iter_count == 8'd255);
+assign debug_core_overall_diverge_or_max = (($signed(z_real) > TWO_POINT_ZERO_FIXED || $signed(z_real) < -$signed(TWO_POINT_ZERO_FIXED) ||
+                                            $signed(z_imag) > TWO_POINT_ZERO_FIXED || $signed(z_imag) < -$signed(TWO_POINT_ZERO_FIXED)) ||
+                                            iter_count == 8'd255);
+
+assign iterations = iter_count;
+assign calc_done = calc_done_reg;
+
+always @(posedge clk or posedge reset) begin
+    if (reset) begin
+        z_real <= 0;
+        z_imag <= 0;
+        c_real_internal <= 0;
+        c_imag_internal <= 0;
+        iter_count <= 0;
+        calc_done_reg <= 0;
+        state <= IDLE;
+        zr_sq <= 0;
+        zi_sq <= 0;
+        two_abs_zr_abs_zi_temp <= 0;
+        zr_sq_scaled <= 0;
+        zi_sq_scaled <= 0;
+        two_zr_zi_scaled <= 0;
+        is_z_real_neg_q <= 0;
+        is_z_imag_neg_q <= 0;
+    end else begin
+        calc_done_reg <= 0;
+        case (state)
+            IDLE: begin
+                if (start_calc) begin
+                    z_real <= 0;
+                    z_imag <= 0;
+                    c_real_internal <= c_real_in;
+                    c_imag_internal <= c_imag_in;
+                    iter_count <= 0;
+                    state <= CALC;
+                end
+            end
+            CALC: begin
+                if (debug_core_overall_diverge_or_max) begin 
+                    calc_done_reg <= 1;
+                    state <= DONE;
+                end else begin
+                   
+                    is_z_real_neg_q <= z_real[31];
+                    is_z_imag_neg_q <= z_imag[31];
+
+                    zr_sq <= $signed(z_real) * $signed(z_real);
+                    zi_sq <= $signed(z_imag) * $signed(z_imag);
+
+                   
+                    two_abs_zr_abs_zi_temp <= $signed(z_real) * $signed(z_imag); 
+
+                    
+                    zr_sq_scaled <= (zr_sq >> Q_BITS); 
+                    zi_sq_scaled <= (zi_sq >> Q_BITS); 
+
+                  
+                    if (is_z_real_neg_q != is_z_imag_neg_q) begin 
+                        two_zr_zi_scaled <= -($signed(two_abs_zr_abs_zi_temp) >> (Q_BITS - 1));
+                    end else begin 
+                        two_zr_zi_scaled <= ($signed(two_abs_zr_abs_zi_temp) >> (Q_BITS - 1));
+                    end
+
+                    z_real <= zr_sq_scaled - zi_sq_scaled + c_real_internal;
+                    z_imag <= two_zr_zi_scaled + c_imag_internal;
+
+                    iter_count <= iter_count + 1;
+                end
+            end
+            DONE: begin
+                if (!start_calc)
+                    state <= IDLE;
+            end
+            default: state <= IDLE;
+        endcase
+    end
+end
+
+endmodule
