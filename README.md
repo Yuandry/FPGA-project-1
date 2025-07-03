@@ -18,7 +18,7 @@ Tools Used:
 
 Hardware Description Language: Verilog
 
-FPGA Platform: (e.g., Xilinx Artix-7 on Arty S7-50)
+FPGA Platform: (Xilinx, Arty S7-50)
 
 FPGA Toolchain: Vivado
 
