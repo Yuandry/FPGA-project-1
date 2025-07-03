@@ -1,0 +1,23 @@
+import serial, time, sys
+
+PORT, BAUD = 'COM4', 115200
+
+def read_fpga():
+    try:
+        s = serial.Serial(PORT, BAUD, timeout=1, write_timeout=1)
+        while True:
+            line = s.readline().decode('ascii').strip()
+            if line:
+                print(f"result: {line}")
+                if line.startswith("i="):
+                    try: print(f"Iterative calculation: {int(line.split('=')[1])}")
+                    except: print(f"Parsing failed: '{line}'")
+            time.sleep(0.01)
+    except Exception as e:
+        print(f"error: {PORT}。\ncontent: {e}\nPlease check your connection。")
+        sys.exit(1)
+    finally:
+        if 's' in locals() and s.is_open: s.close(); print("close connection。")
+
+if __name__ == "__main__":
+    read_fpga()
